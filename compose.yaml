@@ -14,7 +14,15 @@ services:
       interval: 30s
       start_period: 15s
     networks:
-      - coolify   # <-- pour que Traefik puisse router vers le front
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.swetrix.rule=Host(`swetrix.cool.astr.studio`)
+      - traefik.http.routers.swetrix.entrypoints=http,https
+      - traefik.http.routers.swetrix.tls=true
+      - traefik.http.routers.swetrix.tls.certresolver=letsencrypt
+      - traefik.http.services.swetrix.loadbalancer.server.port=3000
+      - coolify.managed=true
 
   # Backend Swetrix (API)
   swetrix-api:
@@ -57,8 +65,16 @@ services:
       interval: 30s
       start_period: 15s
     networks:
-      - backend   # parle à redis/clickhouse
-      - coolify   # exposé au proxy
+      - backend
+      - coolify
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.swetrix_api.rule=Host(`api-swet.cool.astr.studio`)
+      - traefik.http.routers.swetrix_api.entrypoints=http,https
+      - traefik.http.routers.swetrix_api.tls=true
+      - traefik.http.routers.swetrix_api.tls.certresolver=letsencrypt
+      - traefik.http.services.swetrix_api.loadbalancer.server.port=5005
+      - coolify.managed=true
 
   # Redis (cache/queue)
   redis:
@@ -90,6 +106,7 @@ services:
       - SYS_NICE
     volumes:
       - swetrix-events-data:/var/lib/clickhouse
+      # Garde ces montages si tu as les fichiers dans le repo
       - ./clickhouse/reduce-logs.xml:/etc/clickhouse-server/config.d/reduce-logs.xml:ro
       - ./clickhouse/disable-user-logging.xml:/etc/clickhouse-server/users.d/disable-user-logging.xml:ro
       - ./clickhouse/preserve-ram-config.xml:/etc/clickhouse-server/config.d/preserve-ram-config.xml:ro
