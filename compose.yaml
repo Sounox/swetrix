@@ -6,13 +6,15 @@ services:
     depends_on:
       - swetrix-api
     expose:
-      - "3000"  # port interne consommé par Traefik
+      - "3000"
     environment:
       - API_URL=${API_URL}
     healthcheck:
       test: ["CMD-SHELL","wget --no-verbose --tries=1 --spider http://localhost:3000/ping || exit 1"]
       interval: 30s
       start_period: 15s
+    networks:
+      - coolify   # <-- pour que Traefik puisse router vers le front
 
   # Backend Swetrix (API)
   swetrix-api:
@@ -20,31 +22,27 @@ services:
     restart: always
     container_name: swetrix-api
     expose:
-      - "5005"  # port interne consommé par Traefik
+      - "5005"
     environment:
-      # Core
       - SECRET_KEY_BASE=${SECRET_KEY_BASE}
       - DISABLE_REGISTRATION
       - IP_GEOLOCATION_DB_PATH
       - DEBUG_MODE
       - CLOUDFLARE_PROXY_ENABLED
-
-      # SMTP (optionnel, recommandé)
+      # SMTP (optionnel)
       - SMTP_HOST
       - SMTP_PORT
       - SMTP_USER
       - SMTP_PASSWORD
       - FROM_EMAIL
       - SMTP_MOCK
-
       # OIDC (optionnel)
       - OIDC_ENABLED
       - OIDC_ONLY_AUTH
       - OIDC_DISCOVERY_URL
       - OIDC_CLIENT_ID
       - OIDC_CLIENT_SECRET
-
-      # Backing services (requis)
+      # Backing services
       - REDIS_HOST=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CLICKHOUSE_HOST=http://clickhouse
@@ -58,8 +56,11 @@ services:
       test: ["CMD-SHELL","wget --no-verbose --tries=1 --spider http://localhost:5005/ping || exit 1"]
       interval: 30s
       start_period: 15s
+    networks:
+      - backend   # parle à redis/clickhouse
+      - coolify   # exposé au proxy
 
-  # Redis protégé par mot de passe
+  # Redis (cache/queue)
   redis:
     image: redis:8.2-alpine
     restart: always
@@ -68,8 +69,10 @@ services:
       test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 30s
       start_period: 1m
+    networks:
+      - backend
 
-  # ClickHouse (stockage des events)
+  # ClickHouse (base d'événements)
   clickhouse:
     image: clickhouse/clickhouse-server:24.10-alpine
     container_name: clickhouse
@@ -87,17 +90,23 @@ services:
       - SYS_NICE
     volumes:
       - swetrix-events-data:/var/lib/clickhouse
-      # Réduction logs
       - ./clickhouse/reduce-logs.xml:/etc/clickhouse-server/config.d/reduce-logs.xml:ro
       - ./clickhouse/disable-user-logging.xml:/etc/clickhouse-server/users.d/disable-user-logging.xml:ro
-      # Réduction RAM
       - ./clickhouse/preserve-ram-config.xml:/etc/clickhouse-server/config.d/preserve-ram-config.xml:ro
       - ./clickhouse/preserve-ram-user.xml:/etc/clickhouse-server/users.d/preserve-ram-user.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
+    networks:
+      - backend
 
 volumes:
   swetrix-events-data:
     driver: local
+
+networks:
+  backend:
+    driver: bridge
+  coolify:
+    external: true
