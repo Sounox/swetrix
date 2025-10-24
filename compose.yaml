@@ -1,39 +1,35 @@
 services:
-  # This is Swetrix user interface application, it's used to display the analytics data, render charts, etc.
+  # Frontend Swetrix (UI)
   swetrix:
     image: swetrix/swetrix-fe:v4.0.5
     restart: always
     depends_on:
       - swetrix-api
-    ports:
-      - "80:3000"
+    expose:
+      - "3000"  # port interne consommé par Traefik
     environment:
       - API_URL=${API_URL}
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget --no-verbose --tries=1 --spider http://localhost:3000/ping || exit 1",
-        ]
+      test: ["CMD-SHELL","wget --no-verbose --tries=1 --spider http://localhost:3000/ping || exit 1"]
       interval: 30s
       start_period: 15s
 
-  # This is Swetrix API, it's purpose is to collect incoming analytical events and serve the data to the UI
+  # Backend Swetrix (API)
   swetrix-api:
     image: swetrix/swetrix-api:v4.0.5
     restart: always
     container_name: swetrix-api
-    ports:
-      - "8080:5005"
+    expose:
+      - "5005"  # port interne consommé par Traefik
     environment:
-      # Configurable with .env file
+      # Core
       - SECRET_KEY_BASE=${SECRET_KEY_BASE}
       - DISABLE_REGISTRATION
       - IP_GEOLOCATION_DB_PATH
       - DEBUG_MODE
       - CLOUDFLARE_PROXY_ENABLED
 
-      # Emails configuration (SMTP)
+      # SMTP (optionnel, recommandé)
       - SMTP_HOST
       - SMTP_PORT
       - SMTP_USER
@@ -41,79 +37,67 @@ services:
       - FROM_EMAIL
       - SMTP_MOCK
 
-      # OIDC configuration
+      # OIDC (optionnel)
       - OIDC_ENABLED
       - OIDC_ONLY_AUTH
       - OIDC_DISCOVERY_URL
       - OIDC_CLIENT_ID
       - OIDC_CLIENT_SECRET
 
-      # Redis and Clickhouse are required for the API to work
+      # Backing services (requis)
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - CLICKHOUSE_HOST=http://clickhouse
-      - CLICKHOUSE_PASSWORD
-      - REDIS_PASSWORD
-    links:
-      - "redis"
-      - "clickhouse"
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
     depends_on:
       redis:
         condition: service_healthy
       clickhouse:
         condition: service_healthy
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget --no-verbose --tries=1 --spider http://localhost:5005/ping || exit 1",
-        ]
+      test: ["CMD-SHELL","wget --no-verbose --tries=1 --spider http://localhost:5005/ping || exit 1"]
       interval: 30s
       start_period: 15s
 
+  # Redis protégé par mot de passe
   redis:
     image: redis:8.2-alpine
     restart: always
-    environment:
-      - REDIS_PORT=6379
-      - REDIS_USER=default
-      - REDIS_PASSWORD
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      test: ["CMD-SHELL", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"]
       interval: 30s
       start_period: 1m
 
+  # ClickHouse (stockage des events)
   clickhouse:
     image: clickhouse/clickhouse-server:24.10-alpine
     container_name: clickhouse
+    restart: always
     environment:
       - CLICKHOUSE_DATABASE=analytics
       - CLICKHOUSE_USER=default
       - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_PASSWORD
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "wget --no-verbose --tries=1 -O - http://127.0.0.1:8123/ping || exit 1",
-        ]
+      test: ["CMD-SHELL","wget --no-verbose --tries=1 -O - http://127.0.0.1:8123/ping || exit 1"]
       interval: 30s
       start_period: 1m
-    restart: always
     cap_add:
       - SYS_NICE
     volumes:
       - swetrix-events-data:/var/lib/clickhouse
-      # Disable logging
+      # Réduction logs
       - ./clickhouse/reduce-logs.xml:/etc/clickhouse-server/config.d/reduce-logs.xml:ro
       - ./clickhouse/disable-user-logging.xml:/etc/clickhouse-server/users.d/disable-user-logging.xml:ro
-
-      # Reduce RAM usage
+      # Réduction RAM
       - ./clickhouse/preserve-ram-config.xml:/etc/clickhouse-server/config.d/preserve-ram-config.xml:ro
       - ./clickhouse/preserve-ram-user.xml:/etc/clickhouse-server/users.d/preserve-ram-user.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
+
 volumes:
   swetrix-events-data:
     driver: local
